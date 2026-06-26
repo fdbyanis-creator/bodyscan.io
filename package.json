@@ -1,0 +1,9 @@
+{
+  "name": "bodyscan-io",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Landing page Bodyscan.io — analyse corporelle par IA",
+  "scripts": {
+    "dev": "npx serve ."
+  }
+}

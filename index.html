@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bodyscan.io — Analyse corporelle par IA</title>
+<meta name="description" content="Scanne ton corps, obtiens ton morphotype, ton taux de masse grasse et un plan d'action personnalisé en 60 secondes.">
+
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+
+<!-- Tailwind -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- AOS -->
+<link href="https://cdnjs.cloudflare.com/ajax/libs/aos/2.3.4/aos.css" rel="stylesheet">
+
+<!-- FontAwesome -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+<!-- Supabase -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          char: {
+            900: '#0B0D0F',
+            800: '#12151A',
+            700: '#1A1D21',
+            600: '#23272D',
+          },
+          burn: {
+            DEFAULT: '#FF6B1A',
+            light: '#FF8A42',
+            dim: '#B8501A',
+          },
+          gain: '#39FF6A',
+          bone: '#F5F3F0',
+        },
+        fontFamily: {
+          display: ['"Space Grotesk"', 'sans-serif'],
+          body: ['"Inter"', 'sans-serif'],
+          mono: ['"JetBrains Mono"', 'monospace'],
+        },
+      }
+    }
+  }
+</script>
+
+
+<style>
+  * { scrollbar-width: thin; scrollbar-color: #FF6B1A #12151A; }
+  body { font-feature-settings: "tnum"; }
+
+  .bg-noise {
+    background-image: radial-gradient(circle at 1px 1px, rgba(245,243,240,0.035) 1px, transparent 0);
+    background-size: 22px 22px;
+  }
+
+  .glow-burn {
+    box-shadow: 0 0 0 1px rgba(255,107,26,0.15), 0 8px 40px -8px rgba(255,107,26,0.35);
+  }
+
+  .text-glow {
+    text-shadow: 0 0 24px rgba(255,107,26,0.45);
+  }
+
+  .data-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  /* Scanner hero animation */
+  .scan-frame {
+    position: relative;
+    overflow: hidden;
+    border-radius: 1.25rem;
+    background: linear-gradient(180deg, #12151A 0%, #0B0D0F 100%);
+  }
+  .scan-line {
+    position: absolute;
+    left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, #FF6B1A 20%, #FF8A42 50%, #FF6B1A 80%, transparent);
+    box-shadow: 0 0 18px 2px rgba(255,107,26,0.7), 0 0 40px 6px rgba(255,107,26,0.3);
+    animation: scanMove 4s ease-in-out infinite;
+  }
+  @keyframes scanMove {
+    0%   { top: 6%; opacity: 0; }
+    8%   { opacity: 1; }
+    50%  { top: 94%; opacity: 1; }
+    58%  { opacity: 0; }
+    100% { top: 6%; opacity: 0; }
+  }
+  .scan-data-point {
+    opacity: 0;
+    transform: translateX(-6px);
+    transition: opacity 0.5s ease, transform 0.5s ease;
+  }
+  .scan-data-point.revealed {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  .silhouette-svg path, .silhouette-svg line, .silhouette-svg circle {
+    stroke: #3A3F46;
+    transition: stroke 0.6s ease;
+  }
+  .silhouette-svg.lit path, .silhouette-svg.lit line, .silhouette-svg.lit circle {
+    stroke: #FF8A42;
+  }
+
+  .card-hover {
+    transition: transform 0.25s ease, border-color 0.25s ease;
+  }
+  .card-hover:hover {
+    transform: translateY(-4px);
+  }
+
+  .pricing-card.featured {
+    background: linear-gradient(160deg, rgba(255,107,26,0.10), rgba(18,21,26,0.4));
+  }
+
+  ::selection { background: #FF6B1A; color: #0B0D0F; }
+</style>
+</head>
+<body class="bg-char-900 text-bone font-body antialiased">
+
+<!-- ============ DASHBOARD (affiché uniquement si connecté) ============ -->
+<section id="dashboardSection" class="hidden pt-32 pb-24 min-h-screen">
+  <div class="max-w-3xl mx-auto px-6 lg:px-8 text-center">
+    <span class="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-gain bg-gain/10 border border-gain/25 rounded-full px-3 py-1.5 mb-6">
+      <i class="fa-solid fa-circle-check"></i> Compte actif
+    </span>
+    <h1 class="font-display font-bold text-3xl lg:text-4xl mb-3">
+      Content de te revoir, <span id="dashUserName" class="text-burn">!</span>
+    </h1>
+    <p class="text-bone/60 mb-10">Ton tableau de bord arrive bientôt. Lance ton premier scan pour commencer.</p>
+
+    <div class="scan-frame border border-char-600 p-10 max-w-sm mx-auto mb-8">
+      <i class="fa-solid fa-camera-retro text-burn text-4xl mb-4"></i>
+      <p class="font-display font-semibold text-lg mb-1">Aucun scan pour l'instant</p>
+      <p class="text-sm text-bone/50 mb-6">Upload une photo pour lancer ta première analyse.</p>
+      <button class="bg-burn hover:bg-burn-light text-char-900 font-semibold px-6 py-3 rounded-lg transition glow-burn w-full">
+        Scanner mon corps
+      </button>
+    </div>
+
+    <button onclick="showLanding()" class="text-sm text-bone/40 hover:text-bone/70 transition">
+      ← Retour à l'accueil
+    </button>
+  </div>
+</section>
+
+<!-- ============ NAVIGATION ============ -->
+<nav class="fixed top-0 inset-x-0 z-50 backdrop-blur-md bg-char-900/80 border-b border-char-700">
+  <div class="max-w-7xl mx-auto px-6 lg:px-8 h-16 flex items-center justify-between">
+    <a href="#" class="flex items-center gap-2 font-display font-bold text-lg">
+      <span class="relative w-8 h-8 rounded-md bg-burn/10 border border-burn/30 flex items-center justify-center">
+        <i class="fa-solid fa-radar text-burn text-sm"></i>
+      </span>
+      Bodyscan<span class="text-burn">.io</span>
+    </a>
+
+    <div class="hidden md:flex items-center gap-8 text-sm font-medium text-bone/70">
+      <a href="#fonctionnement" class="hover:text-bone transition">Fonctionnement</a>
+      <a href="#tarifs" class="hover:text-bone transition">Tarifs</a>
+      <a href="#avis" class="hover:text-bone transition">Avis</a>
+    </div>
+
+    <!-- Logged-out state -->
+    <div id="navLoggedOut" class="flex items-center gap-3">
+      <button onclick="openAuthModal('login')" class="hidden sm:block text-sm font-medium text-bone/80 hover:text-bone transition px-3 py-2">
+        Connexion
+      </button>
+      <button onclick="openAuthModal('signup')" class="text-sm font-semibold bg-burn hover:bg-burn-light text-char-900 px-4 py-2 rounded-lg transition glow-burn">
+        Démarrer gratuitement
+      </button>
+    </div>
+
+    <!-- Logged-in state -->
+    <div id="navLoggedIn" class="hidden items-center gap-3">
+      <button onclick="goToDashboard()" class="hidden sm:flex items-center gap-2 text-sm font-medium text-bone/80 hover:text-bone transition px-3 py-2">
+        <i class="fa-solid fa-gauge-high text-burn text-xs"></i> Mon espace
+      </button>
+      <div class="relative" id="userMenuWrap">
+        <button onclick="toggleUserMenu()" class="w-9 h-9 rounded-full bg-burn/15 border border-burn/30 flex items-center justify-center font-display font-semibold text-burn text-sm">
+          <span id="userInitial">?</span>
+        </button>
+        <div id="userMenu" class="hidden absolute right-0 top-11 w-48 bg-char-700 border border-char-600 rounded-lg shadow-xl py-1.5 z-50">
+          <p id="userEmailLabel" class="px-4 py-2 text-xs text-bone/40 truncate border-b border-char-600 mb-1"></p>
+          <button onclick="goToDashboard()" class="w-full text-left px-4 py-2 text-sm text-bone/80 hover:bg-char-600/60 transition">Mon espace</button>
+          <button onclick="signOut()" class="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-char-600/60 transition">Se déconnecter</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<!-- ============ LANDING (marketing) ============ -->
+<div id="landingSections">
+
+<!-- ============ HERO ============ -->
+<section class="relative pt-32 pb-20 lg:pt-40 lg:pb-28 bg-noise overflow-hidden">
+  <div class="absolute -top-32 left-1/2 -translate-x-1/2 w-[600px] h-[600px] bg-burn/10 rounded-full blur-[120px] pointer-events-none"></div>
+
+  <div class="max-w-7xl mx-auto px-6 lg:px-8 relative grid lg:grid-cols-2 gap-16 items-center">
+
+    <!-- Left: copy -->
+    <div data-aos="fade-up" data-aos-duration="600">
+      <span class="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-burn bg-burn/10 border border-burn/25 rounded-full px-3 py-1.5 mb-6">
+        <i class="fa-solid fa-bolt"></i> Analyse en 60 secondes
+      </span>
+      <h1 class="font-display font-bold text-4xl sm:text-5xl lg:text-6xl leading-[1.05] tracking-tight mb-6">
+        Une photo.<br>
+        <span class="text-burn text-glow">Ton corps, décodé.</span>
+      </h1>
+      <p class="text-lg text-bone/65 max-w-md mb-8 leading-relaxed">
+        Morphotype, taux de masse grasse, zones prioritaires. Notre IA scanne ta silhouette et te donne un plan d'entraînement, de nutrition et de compléments fait pour toi.
+      </p>
+      <div class="flex flex-wrap items-center gap-4">
+        <button onclick="openAuthModal('signup')" class="bg-burn hover:bg-burn-light text-char-900 font-semibold px-6 py-3.5 rounded-lg transition glow-burn flex items-center gap-2">
+          <i class="fa-solid fa-camera"></i> Scanner mon corps — Gratuit
+        </button>
+        <a href="#fonctionnement" class="text-bone/70 hover:text-bone font-medium px-2 py-3.5 flex items-center gap-2 transition">
+          Voir comment ça marche <i class="fa-solid fa-arrow-down text-sm"></i>
+        </a>
+      </div>
+      <p class="text-xs text-bone/40 mt-5">Aucune carte bancaire requise pour le premier scan.</p>
+    </div>
+
+    <!-- Right: animated scanner -->
+    <div class="scan-frame border border-char-600 p-8 lg:p-10" data-aos="fade-up" data-aos-duration="600" data-aos-delay="150">
+      <div class="relative h-[420px] flex items-center justify-center">
+        <svg id="silhouette" class="silhouette-svg" viewBox="0 0 200 400" width="180" height="360" fill="none" stroke-width="1.5">
+          <!-- head -->
+          <circle cx="100" cy="38" r="22"/>
+          <!-- neck -->
+          <line x1="100" y1="60" x2="100" y2="74"/>
+          <!-- shoulders/torso -->
+          <path d="M60 95 Q100 78 140 95 L150 165 Q145 200 130 215 L120 230 L80 230 L70 215 Q55 200 50 165 Z"/>
+          <!-- arms -->
+          <path d="M60 95 L35 175 L40 220"/>
+          <path d="M140 95 L165 175 L160 220"/>
+          <!-- legs -->
+          <path d="M80 230 L72 330 L78 385"/>
+          <path d="M120 230 L128 330 L122 385"/>
+          <!-- waist guide -->
+          <line x1="65" y1="160" x2="135" y2="160" stroke-dasharray="3 4"/>
+        </svg>
+
+        <div class="scan-line"></div>
+
+        <!-- Data callouts -->
+        <div class="scan-data-point absolute left-2 top-[18%] text-left" data-reveal="1">
+          <p class="text-[10px] uppercase tracking-wider text-bone/40">Morphotype</p>
+          <p class="data-num text-burn text-sm">Mésomorphe</p>
+        </div>
+        <div class="scan-data-point absolute right-2 top-[40%] text-right" data-reveal="2">
+          <p class="text-[10px] uppercase tracking-wider text-bone/40">Masse grasse</p>
+          <p class="data-num text-burn text-sm">16.4%</p>
+        </div>
+        <div class="scan-data-point absolute left-2 top-[62%] text-left" data-reveal="3">
+          <p class="text-[10px] uppercase tracking-wider text-bone/40">Zone prioritaire</p>
+          <p class="data-num text-gain text-sm">Abdomen</p>
+        </div>
+        <div class="scan-data-point absolute right-2 top-[84%] text-right" data-reveal="4">
+          <p class="text-[10px] uppercase tracking-wider text-bone/40">Score posture</p>
+          <p class="data-num text-burn text-sm">8.1 / 10</p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ============ FEATURES ============ -->
+<section id="fonctionnement" class="py-24 border-t border-char-700">
+  <div class="max-w-7xl mx-auto px-6 lg:px-8">
+    <div class="max-w-xl mb-16" data-aos="fade-up">
+      <span class="text-burn text-xs font-semibold uppercase tracking-wider">Comment ça marche</span>
+      <h2 class="font-display font-bold text-3xl lg:text-4xl mt-3 leading-tight">
+        De la photo au plan d'action, sans détour.
+      </h2>
+    </div>
+
+    <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+
+      <div class="card-hover bg-char-700/50 border border-char-600 rounded-xl p-6" data-aos="fade-up" data-aos-delay="0">
+        <div class="w-11 h-11 rounded-lg bg-burn/10 border border-burn/25 flex items-center justify-center mb-5">
+          <i class="fa-solid fa-camera-retro text-burn"></i>
+        </div>
+        <h3 class="font-display font-semibold text-lg mb-2">Upload photo</h3>
+        <p class="text-sm text-bone/60 leading-relaxed">Une photo face/profil suffit. Notre IA fait le reste, en toute confidentialité.</p>
+      </div>
+
+      <div class="card-hover bg-char-700/50 border border-char-600 rounded-xl p-6" data-aos="fade-up" data-aos-delay="100">
+        <div class="w-11 h-11 rounded-lg bg-burn/10 border border-burn/25 flex items-center justify-center mb-5">
+          <i class="fa-solid fa-chart-simple text-burn"></i>
+        </div>
+        <h3 class="font-display font-semibold text-lg mb-2">Analyse complète</h3>
+        <p class="text-sm text-bone/60 leading-relaxed">Morphotype, % de masse grasse, zones prioritaires à travailler en priorité.</p>
+      </div>
+
+      <div class="card-hover bg-char-700/50 border border-char-600 rounded-xl p-6" data-aos="fade-up" data-aos-delay="200">
+        <div class="w-11 h-11 rounded-lg bg-burn/10 border border-burn/25 flex items-center justify-center mb-5">
+          <i class="fa-solid fa-dumbbell text-burn"></i>
+        </div>
+        <h3 class="font-display font-semibold text-lg mb-2">Plan personnalisé</h3>
+        <p class="text-sm text-bone/60 leading-relaxed">Exercices ciblés, recommandations nutrition et compléments adaptés à ton profil.</p>
+      </div>
+
+      <div class="card-hover bg-char-700/50 border border-char-600 rounded-xl p-6" data-aos="fade-up" data-aos-delay="300">
+        <div class="w-11 h-11 rounded-lg bg-burn/10 border border-burn/25 flex items-center justify-center mb-5">
+          <i class="fa-solid fa-arrow-trend-up text-burn"></i>
+        </div>
+        <h3 class="font-display font-semibold text-lg mb-2">Suivi de progrès</h3>
+        <p class="text-sm text-bone/60 leading-relaxed">Rescanne chaque semaine et visualise ton évolution chiffre par chiffre.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============ PRICING ============ -->
+<section id="tarifs" class="py-24 border-t border-char-700 bg-noise">
+  <div class="max-w-7xl mx-auto px-6 lg:px-8">
+    <div class="text-center max-w-xl mx-auto mb-16" data-aos="fade-up">
+      <span class="text-burn text-xs font-semibold uppercase tracking-wider">Tarifs</span>
+      <h2 class="font-display font-bold text-3xl lg:text-4xl mt-3 leading-tight">Un plan pour chaque objectif</h2>
+      <p class="text-bone/60 mt-3">Commence gratuitement, évolue quand tu es prêt.</p>
+    </div>
+
+    <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
+
+      <!-- Free -->
+      <div class="pricing-card card-hover bg-char-700/40 border border-char-600 rounded-2xl p-7 flex flex-col" data-aos="fade-up" data-aos-delay="0">
+        <h3 class="font-display font-semibold text-lg mb-1">Free</h3>
+        <p class="text-xs text-bone/50 mb-5">Pour tester l'analyse</p>
+        <p class="font-display font-bold text-3xl mb-6">0€</p>
+        <ul class="space-y-3 text-sm text-bone/70 mb-8 flex-1">
+          <li class="flex gap-2"><i class="fa-solid fa-check text-burn mt-0.5"></i> 1 scan photo</li>
+          <li class="flex gap-2"><i class="fa-solid fa-check text-burn mt-0.5"></i> Morphotype & % masse grasse</li>
+          <li class="flex gap-2 text-bone/35"><i class="fa-solid fa-xmark mt-0.5"></i> Plan d'entraînement</li>
+          <li class="flex gap-2 text-bone/35"><i class="fa-solid fa-xmark mt-0.5"></i> Suivi de progrès</li>
+        </ul>
+        <button onclick="openAuthModal('signup')" class="border border-char-600 hover:border-burn/50 text-bone font-medium py-2.5 rounded-lg transition text-sm">Commencer</button>
+      </div>
+
+      <!-- Starter -->
+      <div class="pricing-card card-hover bg-char-700/40 border border-char-600 rounded-2xl p-7 flex flex-col" data-aos="fade-up" data-aos-delay="100">
+        <h3 class="font-display font-semibold text-lg mb-1">Starter</h3>
+        <p class="text-xs text-bone/50 mb-5">Pour suivre ta progression</p>
+        <p class="font-display font-bold text-3xl mb-6">9,99€<span class="text-sm text-bone/40 font-normal">/mois</span></p>
+        <ul class="space-y-3 text-sm text-bone/70 mb-8 flex-1">
+          <li class="flex gap-2"><i class="fa-solid fa-check text-burn mt-0.5"></i> 4 scans / mois</li>
+          <li class="flex gap-2"><i class="fa-solid fa-check text-burn mt-0.5"></i> Zones prioritaires détaillées</li>
+          <li class="flex gap-2"><i class="fa-solid fa-check text-burn mt-0.5"></i> Suivi de progrès</li>
+          <li class="flex gap-2 text-bone/35"><i class="fa-solid fa-xmark mt-0.5"></i> Plan nutrition complet</li>
+        </ul>
+        <button onclick="openAuthModal('signup')" class="border border-char-600 hover:border-burn/50 text-bone font-medium py-2.5 rounded-lg transition text-sm">Choisir Starter</button>
+      </div>
+
+      <!-- Pro - featured -->
+      <div class="pricing-card featured card-hover border-2 border-burn rounded-2xl p-7 flex flex-col relative glow-burn" data-aos="fade-up" data-aos-delay="200">
+        <span class="absolute -top-3 left-1/2 -translate-x-1/2 bg-burn text-char-900 text-xs font-semibold px-3 py-1 rounded-full">Le plus choisi</span>
+        <h3 class="font-display font-semibold text-lg mb-1">Pro</h3>
+        <p class="text-xs text-bone/50 mb-5">Pour une transformation sérieuse</p>
+        <p class="font-display font-bold text-3xl mb-6">29,99€<span class="text-sm text-bone/40 font-normal">/mois</span></p>
+        <ul class="space-y-3 text-sm text-bone/70 mb-8 flex-1">
+          <li class="flex gap-2"><i class="fa-solid fa-check text-burn mt-0.5"></i> Scans illimités</li>
+          <li class="flex gap-2"><i class="fa-solid fa-check text-burn mt-0.5"></i> Plan d'entraînement complet</li>
+          <li class="flex gap-2"><i class="fa-solid fa-check text-burn mt-0.5"></i> Plan nutrition personnalisé</li>
+          <li class="flex gap-2"><i class="fa-solid fa-check text-burn mt-0.5"></i> Recommandations compléments</li>
+        </ul>
+        <button onclick="openAuthModal('signup')" class="bg-burn hover:bg-burn-light text-char-900 font-semibold py-2.5 rounded-lg transition text-sm">Choisir Pro</button>
+      </div>
+
+      <!-- Unlimited -->
+      <div class="pricing-card card-hover bg-char-700/40 border border-char-600 rounded-2xl p-7 flex flex-col" data-aos="fade-up" data-aos-delay="300">
+        <h3 class="font-display font-semibold text-lg mb-1">Unlimited</h3>
+        <p class="text-xs text-bone/50 mb-5">L'accompagnement complet</p>
+        <p class="font-display font-bold text-3xl mb-6">79,99€<span class="text-sm text-bone/40 font-normal">/mois</span></p>
+        <ul class="space-y-3 text-sm text-bone/70 mb-8 flex-1">
+          <li class="flex gap-2"><i class="fa-solid fa-check text-burn mt-0.5"></i> Tout le plan Pro, inclus</li>
+          <li class="flex gap-2"><i class="fa-solid fa-check text-burn mt-0.5"></i> Plans complets (full body, mensuel)</li>
+          <li class="flex gap-2"><i class="fa-solid fa-check text-burn mt-0.5"></i> Ajustements hebdomadaires du plan</li>
+          <li class="flex gap-2"><i class="fa-solid fa-check text-burn mt-0.5"></i> Support prioritaire</li>
+        </ul>
+        <button onclick="openAuthModal('signup')" class="border border-char-600 hover:border-burn/50 text-bone font-medium py-2.5 rounded-lg transition text-sm">Choisir Unlimited</button>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============ TESTIMONIALS ============ -->
+<section id="avis" class="py-24 border-t border-char-700">
+  <div class="max-w-7xl mx-auto px-6 lg:px-8">
+    <div class="text-center max-w-xl mx-auto mb-16" data-aos="fade-up">
+      <span class="text-burn text-xs font-semibold uppercase tracking-wider">Avis</span>
+      <h2 class="font-display font-bold text-3xl lg:text-4xl mt-3 leading-tight">Ils ont scanné. Ils ont progressé.</h2>
+    </div>
+
+    <div class="grid md:grid-cols-3 gap-6">
+
+      <div class="bg-char-700/50 border border-char-600 rounded-xl p-6" data-aos="fade-up" data-aos-delay="0">
+        <div class="flex gap-1 text-burn text-sm mb-4">
+          <i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i>
+        </div>
+        <p class="text-sm text-bone/70 leading-relaxed mb-5">"Le plan nutrition m'a fait perdre 4% de masse grasse en 2 mois, sans changer ma routine d'entraînement."</p>
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-full bg-burn/20 flex items-center justify-center font-display font-semibold text-burn text-sm">T</div>
+          <div>
+            <p class="text-sm font-medium">Thomas R.</p>
+            <p class="text-xs text-bone/40">Plan Pro</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-char-700/50 border border-char-600 rounded-xl p-6" data-aos="fade-up" data-aos-delay="100">
+        <div class="flex gap-1 text-burn text-sm mb-4">
+          <i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i>
+        </div>
+        <p class="text-sm text-bone/70 leading-relaxed mb-5">"Enfin un outil qui me dit exactement où concentrer mes efforts au lieu de deviner. Le suivi semaine après semaine est addictif."</p>
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-full bg-burn/20 flex items-center justify-center font-display font-semibold text-burn text-sm">L</div>
+          <div>
+            <p class="text-sm font-medium">Léa M.</p>
+            <p class="text-xs text-bone/40">Plan Starter</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-char-700/50 border border-char-600 rounded-xl p-6" data-aos="fade-up" data-aos-delay="200">
+        <div class="flex gap-1 text-burn text-sm mb-4">
+          <i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star-half-stroke"></i>
+        </div>
+        <p class="text-sm text-bone/70 leading-relaxed mb-5">"L'analyse est bluffante de précision par rapport à ce que mon coach m'avait mesuré à la pince. Le plan Unlimited vaut largement son prix."</p>
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-full bg-burn/20 flex items-center justify-center font-display font-semibold text-burn text-sm">K</div>
+          <div>
+            <p class="text-sm font-medium">Karim B.</p>
+            <p class="text-xs text-bone/40">Plan Unlimited</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============ FINAL CTA ============ -->
+<section class="py-24 border-t border-char-700 relative overflow-hidden">
+  <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-burn/10 rounded-full blur-[120px] pointer-events-none"></div>
+  <div class="max-w-3xl mx-auto px-6 text-center relative" data-aos="fade-up">
+    <h2 class="font-display font-bold text-3xl lg:text-4xl mb-5 leading-tight">Prêt à voir ce que ton corps a à dire ?</h2>
+    <p class="text-bone/60 mb-8">Ton premier scan est gratuit. Aucune carte requise.</p>
+    <button onclick="openAuthModal('signup')" class="bg-burn hover:bg-burn-light text-char-900 font-semibold px-7 py-3.5 rounded-lg transition glow-burn">
+      Scanner mon corps maintenant
+    </button>
+  </div>
+</section>
+
+<!-- ============ FOOTER ============ -->
+<footer class="border-t border-char-700 py-12">
+  <div class="max-w-7xl mx-auto px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center gap-6">
+    <a href="#" class="flex items-center gap-2 font-display font-bold text-lg">
+      <span class="w-8 h-8 rounded-md bg-burn/10 border border-burn/30 flex items-center justify-center">
+        <i class="fa-solid fa-radar text-burn text-sm"></i>
+      </span>
+      Bodyscan<span class="text-burn">.io</span>
+    </a>
+    <div class="flex gap-6 text-sm text-bone/50">
+      <a href="#" class="hover:text-bone transition">Confidentialité</a>
+      <a href="#" class="hover:text-bone transition">CGU</a>
+      <a href="#" class="hover:text-bone transition">Contact</a>
+    </div>
+    <p class="text-xs text-bone/30">© 2026 Bodyscan.io — Tous droits réservés</p>
+  </div>
+</footer>
+
+</div>
+<!-- /landingSections -->
+
+<!-- ============ AUTH MODAL ============ -->
+<div id="authModal" class="fixed inset-0 z-[100] hidden items-center justify-center bg-char-900/80 backdrop-blur-sm px-4">
+  <div class="bg-char-700 border border-char-600 rounded-2xl p-8 w-full max-w-sm relative">
+    <button onclick="closeAuthModal()" class="absolute top-4 right-4 text-bone/40 hover:text-bone transition">
+      <i class="fa-solid fa-xmark"></i>
+    </button>
+
+    <h3 id="authModalTitle" class="font-display font-bold text-2xl mb-1">Crée ton compte</h3>
+    <p class="text-sm text-bone/50 mb-6">Scanne ton corps en moins de 2 minutes.</p>
+
+    <div class="space-y-3 mb-5">
+      <button onclick="signInWithProvider('google')" class="w-full flex items-center justify-center gap-3 bg-char-600 hover:bg-char-600/70 border border-char-600 rounded-lg py-2.5 text-sm font-medium transition">
+        <i class="fa-brands fa-google"></i> Continuer avec Google
+      </button>
+      <button onclick="signInWithProvider('apple')" class="w-full flex items-center justify-center gap-3 bg-char-600 hover:bg-char-600/70 border border-char-600 rounded-lg py-2.5 text-sm font-medium transition">
+        <i class="fa-brands fa-apple"></i> Continuer avec Apple
+      </button>
+    </div>
+
+    <div class="flex items-center gap-3 mb-5">
+      <div class="flex-1 h-px bg-char-600"></div>
+      <span class="text-xs text-bone/30">ou par email</span>
+      <div class="flex-1 h-px bg-char-600"></div>
+    </div>
+
+    <form id="authForm" class="space-y-3" onsubmit="handleEmailAuth(event)">
+      <input type="email" id="authEmail" required placeholder="ton@email.com"
+        class="w-full bg-char-800 border border-char-600 rounded-lg px-4 py-2.5 text-sm placeholder-bone/30 focus:outline-none focus:border-burn/60 transition">
+      <input type="password" id="authPassword" required placeholder="Mot de passe" minlength="6"
+        class="w-full bg-char-800 border border-char-600 rounded-lg px-4 py-2.5 text-sm placeholder-bone/30 focus:outline-none focus:border-burn/60 transition">
+      <button type="submit" id="authSubmitBtn" class="w-full bg-burn hover:bg-burn-light text-char-900 font-semibold py-2.5 rounded-lg transition glow-burn text-sm">
+        Créer mon compte
+      </button>
+    </form>
+
+    <p id="authError" class="text-xs text-red-400 mt-3 hidden"></p>
+    <p id="authSuccess" class="text-xs text-gain mt-3 hidden"></p>
+
+    <p class="text-xs text-bone/40 mt-5 text-center">
+      <span id="authSwitchPrompt">Déjà un compte ?</span>
+      <button onclick="toggleAuthMode()" id="authSwitchBtn" class="text-burn hover:text-burn-light font-medium transition">Se connecter</button>
+    </p>
+  </div>
+</div>
+
+<!-- ============ SCRIPTS ============ -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/aos/2.3.4/aos.js"></script>
+<script>
+  AOS.init({
+    duration: 600,
+    easing: 'ease-out',
+    once: true,
+    offset: 40,
+  });
+
+  /* ---------- Scanner hero animation ---------- */
+  // Reveals each data-point as the scan-line passes its vertical position,
+  // looping in sync with the 4s scanMove CSS animation.
+  function runScanCycle() {
+    const silhouette = document.getElementById('silhouette');
+    const points = document.querySelectorAll('.scan-data-point');
+
+    points.forEach(p => p.classList.remove('revealed'));
+    silhouette.classList.remove('lit');
+
+    setTimeout(() => silhouette.classList.add('lit'), 200);
+    points.forEach(p => {
+      const order = parseInt(p.dataset.reveal, 10);
+      const delay = 200 + order * 650; // staggered as line descends
+      setTimeout(() => p.classList.add('revealed'), delay);
+    });
+  }
+  runScanCycle();
+  setInterval(runScanCycle, 4000);
+
+  /* ---------- Supabase Auth ---------- */
+  // ⚠️ Remplace ces deux valeurs par celles de ton projet Supabase
+  // (Project Settings → API → Project URL / anon public key)
+  const SUPABASE_URL = 'https://VOTRE-PROJET.supabase.co';
+  const SUPABASE_ANON_KEY = 'VOTRE_CLE_ANON_PUBLIC';
+
+  const isSupabaseConfigured =
+    !SUPABASE_URL.includes('VOTRE-PROJET') && !SUPABASE_ANON_KEY.includes('VOTRE_CLE');
+
+  const supabaseClient = isSupabaseConfigured
+    ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    : null;
+
+  let authMode = 'signup'; // 'signup' | 'login'
+  let currentUser = null;
+
+  function openAuthModal(mode) {
+    authMode = mode;
+    updateAuthModalUI();
+    document.getElementById('authModal').classList.remove('hidden');
+    document.getElementById('authModal').classList.add('flex');
+    document.getElementById('authError').classList.add('hidden');
+    document.getElementById('authSuccess').classList.add('hidden');
+    document.getElementById('authForm').reset();
+
+    if (!isSupabaseConfigured) {
+      showAuthError("Supabase n'est pas encore configuré sur cette page (clés manquantes dans le script). Ajoute ton URL et ta clé anon pour activer la connexion.");
+    }
+  }
+
+  function closeAuthModal() {
+    document.getElementById('authModal').classList.add('hidden');
+    document.getElementById('authModal').classList.remove('flex');
+  }
+
+  function toggleAuthMode() {
+    authMode = authMode === 'signup' ? 'login' : 'signup';
+    updateAuthModalUI();
+  }
+
+  function updateAuthModalUI() {
+    const isSignup = authMode === 'signup';
+    document.getElementById('authModalTitle').textContent = isSignup ? 'Crée ton compte' : 'Connexion';
+    document.getElementById('authSubmitBtn').textContent = isSignup ? 'Créer mon compte' : 'Se connecter';
+    document.getElementById('authSwitchPrompt').textContent = isSignup ? 'Déjà un compte ?' : 'Pas encore de compte ?';
+    document.getElementById('authSwitchBtn').textContent = isSignup ? 'Se connecter' : "S'inscrire";
+  }
+
+  function showAuthError(message) {
+    const el = document.getElementById('authError');
+    el.textContent = message;
+    el.classList.remove('hidden');
+    document.getElementById('authSuccess').classList.add('hidden');
+  }
+
+  function showAuthSuccess(message) {
+    const el = document.getElementById('authSuccess');
+    el.textContent = message;
+    el.classList.remove('hidden');
+    document.getElementById('authError').classList.add('hidden');
+  }
+
+  // Traduit les messages d'erreur Supabase les plus courants en français.
+  function translateAuthError(err) {
+    const msg = (err && err.message) || '';
+    const map = {
+      'Invalid login credentials': 'Email ou mot de passe incorrect.',
+      'User already registered': 'Un compte existe déjà avec cet email. Connecte-toi plutôt.',
+      'Password should be at least 6 characters': 'Le mot de passe doit contenir au moins 6 caractères.',
+      'Email not confirmed': "Confirme d'abord ton adresse email via le lien reçu par mail.",
+      'Unable to validate email address: invalid format': "Le format de l'email n'est pas valide.",
+    };
+    for (const key in map) {
+      if (msg.includes(key)) return map[key];
+    }
+    return msg || 'Une erreur est survenue. Réessaie.';
+  }
+
+  async function signInWithProvider(provider) {
+    if (!isSupabaseConfigured) {
+      showAuthError("Supabase n'est pas configuré : ajoute ton URL et ta clé anon dans le script pour activer la connexion " + provider + ".");
+      return;
+    }
+    try {
+      const { error } = await supabaseClient.auth.signInWithOAuth({
+        provider: provider, // 'google' | 'apple'
+        options: {
+          redirectTo: window.location.origin + window.location.pathname,
+        },
+      });
+      if (error) throw error;
+      // Supabase redirige automatiquement le navigateur en cas de succès.
+    } catch (err) {
+      showAuthError(translateAuthError(err));
+    }
+  }
+
+  async function handleEmailAuth(event) {
+    event.preventDefault();
+
+    if (!isSupabaseConfigured) {
+      showAuthError("Supabase n'est pas configuré : ajoute ton URL et ta clé anon dans le script pour activer la création de compte.");
+      return;
+    }
+
+    const email = document.getElementById('authEmail').value.trim();
+    const password = document.getElementById('authPassword').value;
+    const submitBtn = document.getElementById('authSubmitBtn');
+    const originalLabel = submitBtn.textContent;
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Patiente…';
+
+    try {
+      if (authMode === 'signup') {
+        const { data, error } = await supabaseClient.auth.signUp({ email, password });
+        if (error) throw error;
+
+        if (data?.user && !data.session) {
+          showAuthSuccess('Compte créé ! Vérifie ta boîte mail pour confirmer ton adresse, puis connecte-toi.');
+        } else if (data?.session) {
+          showAuthSuccess('Compte créé avec succès !');
+          setCurrentUser(data.session.user);
+          setTimeout(() => { closeAuthModal(); showDashboard(); }, 800);
+        }
+      } else {
+        const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        showAuthSuccess('Connexion réussie !');
+        setCurrentUser(data.user);
+        setTimeout(() => { closeAuthModal(); showDashboard(); }, 600);
+      }
+    } catch (err) {
+      showAuthError(translateAuthError(err));
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = originalLabel;
+    }
+  }
+
+  async function signOut() {
+    if (isSupabaseConfigured) {
+      await supabaseClient.auth.signOut();
+    }
+    currentUser = null;
+    updateNavForAuthState();
+    toggleUserMenu(true);
+    showLanding();
+  }
+
+  /* ---------- Nav / UI state ---------- */
+  function setCurrentUser(user) {
+    currentUser = user;
+    updateNavForAuthState();
+  }
+
+  function updateNavForAuthState() {
+    const loggedOut = document.getElementById('navLoggedOut');
+    const loggedIn = document.getElementById('navLoggedIn');
+
+    if (currentUser) {
+      loggedOut.classList.add('hidden');
+      loggedIn.classList.remove('hidden');
+      loggedIn.classList.add('flex');
+      const email = currentUser.email || '';
+      document.getElementById('userInitial').textContent = email.charAt(0).toUpperCase() || '?';
+      document.getElementById('userEmailLabel').textContent = email;
+      document.getElementById('dashUserName').textContent = email.split('@')[0] || '';
+    } else {
+      loggedIn.classList.add('hidden');
+      loggedIn.classList.remove('flex');
+      loggedOut.classList.remove('hidden');
+    }
+  }
+
+  function toggleUserMenu(forceClose) {
+    const menu = document.getElementById('userMenu');
+    if (forceClose) { menu.classList.add('hidden'); return; }
+    menu.classList.toggle('hidden');
+  }
+
+  // Ferme le menu utilisateur si on clique ailleurs sur la page.
+  document.addEventListener('click', (e) => {
+    const wrap = document.getElementById('userMenuWrap');
+    if (wrap && !wrap.contains(e.target)) toggleUserMenu(true);
+  });
+
+  function goToDashboard() {
+    toggleUserMenu(true);
+    showDashboard();
+  }
+
+  function showDashboard() {
+    document.getElementById('landingSections').classList.add('hidden');
+    document.getElementById('dashboardSection').classList.remove('hidden');
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }
+
+  function showLanding() {
+    document.getElementById('dashboardSection').classList.add('hidden');
+    document.getElementById('landingSections').classList.remove('hidden');
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }
+
+  // Restaure la session existante au chargement (refresh, retour OAuth, etc.)
+  (async () => {
+    if (!isSupabaseConfigured) {
+      console.warn('Supabase non configuré : ajoute SUPABASE_URL et SUPABASE_ANON_KEY dans le script.');
+      return;
+    }
+    try {
+      const { data } = await supabaseClient.auth.getSession();
+      if (data?.session) {
+        setCurrentUser(data.session.user);
+        showDashboard();
+      }
+      // Réagit aussi aux changements d'auth (ex: retour de redirection OAuth Google/Apple).
+      supabaseClient.auth.onAuthStateChange((event, session) => {
+        if (event === 'SIGNED_IN' && session) {
+          setCurrentUser(session.user);
+          closeAuthModal();
+          showDashboard();
+        } else if (event === 'SIGNED_OUT') {
+          currentUser = null;
+          updateNavForAuthState();
+          showLanding();
+        }
+      });
+    } catch (err) {
+      console.warn('Erreur Supabase au chargement :', err.message);
+    }
+  })();
+</script>
+
+</body>
+</html>
